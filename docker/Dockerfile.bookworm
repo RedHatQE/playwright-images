@@ -3,7 +3,6 @@ FROM node:22-bookworm-slim AS base
 # --- Build arguments ---
 ARG PLAYWRIGHT_VERSION=1.52.0
 ARG BUILD_DATE
-ARG VCS_REF
 ARG VERSION
 
 # --- Set default environment variables ---
@@ -18,13 +17,13 @@ ENV PW_VERSION=${PLAYWRIGHT_VERSION} \
     PLAYWRIGHT_BROWSERS_PATH=/home/pwuser/.ms-playwright
 
 # --- Image metadata labels ---
-LABEL org.opencontainers.image.title="Playwright with VNC" \
+LABEL org.opencontainers.image.title="Playwright with VNC (Bookworm)" \
       org.opencontainers.image.description="Playwright browsers with VNC server for headed execution" \
       org.opencontainers.image.url="https://github.com/digitronik/playwright-images" \
       org.opencontainers.image.source="https://github.com/digitronik/playwright-images" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.base.name="node:22-bookworm-slim" \
       org.opencontainers.image.vendor="digitronik" \
       playwright.version="${PLAYWRIGHT_VERSION}"
 
@@ -45,23 +44,32 @@ RUN set -e; \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         tigervnc-standalone-server \
-        fluxbox \
-        supervisor \
         xterm \
         fonts-liberation \
         xfonts-base \
-        xfonts-utils \
         xfonts-75dpi \
         xfonts-100dpi \
         xfonts-scalable \
         wget \
-        ca-certificates
+        ca-certificates && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
-COPY --chown=${APP_USER}:${APP_USER} supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY --chown=${APP_USER}:${APP_USER} start-playwright-server.js ${APP_HOME}/start-playwright-server.js
+# Copy application files
+COPY --chown=${APP_USER}:${APP_USER} runtime/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chown=${APP_USER}:${APP_USER} runtime/start-playwright-server.js ${APP_HOME}/start-playwright-server.js
+
+# Make entrypoint executable
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE ${VNC_PORT} ${PW_PORT}
-CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD pgrep -f "Xvnc.*${DISPLAY}" > /dev/null && pgrep -f "start-playwright-server" > /dev/null || exit 1
+
+CMD ["/usr/local/bin/entrypoint.sh"]
 
 WORKDIR ${APP_HOME}
 USER ${APP_USER}
@@ -80,9 +88,9 @@ RUN npm config set cache /tmp/npm_cache_root --global && \
     npx --yes playwright@${PW_VERSION} install --with-deps firefox && \
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* && \
-    rm -rf /tmp/npm_cache_root /root/.npm && \
-    rm -rf /usr/share/doc /usr/share/man
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
 
 # Add browser-specific labels
 LABEL browser.firefox.available="true" \
@@ -100,9 +108,9 @@ RUN npm config set cache /tmp/npm_cache_root --global && \
     npx --yes playwright@${PW_VERSION} install --with-deps chromium && \
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* && \
-    rm -rf /tmp/npm_cache_root /root/.npm && \
-    rm -rf /usr/share/doc /usr/share/man
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
 
 # Add browser-specific labels
 LABEL browser.firefox.available="false" \
@@ -116,16 +124,13 @@ USER ${APP_USER}
 FROM base AS chrome
 ENV PW_BROWSER="chrome"
 
-RUN echo "===== Downloading and installing Google Chrome Stable from .deb...=====" && \
-    wget -O /tmp/google-chrome-stable_current_amd64.deb "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" && \
-    apt-get install -y --no-install-recommends /tmp/google-chrome-stable_current_amd64.deb && \
-    CHROME_VERSION=$(google-chrome-stable --version | sed 's/Google Chrome //') && \
-    echo "Installed Chrome version: $CHROME_VERSION" && \
+RUN npm config set cache /tmp/npm_cache_root --global && \
+    npx --yes playwright@${PW_VERSION} install --with-deps chrome && \
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* && \
-    rm -rf /tmp/npm_cache_root /root/.npm && \
-    rm -rf /usr/share/doc /usr/share/man
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
 
 # Add browser-specific labels
 LABEL browser.firefox.available="false" \
@@ -138,23 +143,15 @@ USER ${APP_USER}
 # --- All Browsers Target ---
 FROM base AS all
 
-RUN echo "===== Downloading and installing Google Chrome Stable from .deb...=====" && \
-    wget -O /tmp/google-chrome-stable_current_amd64.deb "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" && \
-    apt-get install -y --no-install-recommends /tmp/google-chrome-stable_current_amd64.deb && \
-    CHROME_VERSION=$(google-chrome-stable --version | sed 's/Google Chrome //') && \
-    echo "Installed Chrome version: $CHROME_VERSION" && \
-    echo "===== Installing Playwright browsers (Firefox, Chromium) and their OS dependencies... =====" && \
+RUN echo "===== Installing all Playwright browsers and their OS dependencies... =====" && \
     npm config set cache /tmp/npm_cache_root --global && \
-    npx --yes playwright@${PW_VERSION} install --with-deps firefox chromium && \
-    echo "===== Updating X11 font caches... =====" && \
-    update-font σαν || echo "Warning: update-font σαν failed but continuing. This may be okay." && \
+    npx --yes playwright@${PW_VERSION} install --with-deps firefox chromium chrome && \
     echo "===== Cleanup...=====" && \
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* && \
-    echo "===== Cleaning up npm cache for root and temporary files... =====" && \
-    rm -rf /tmp/npm_cache_root /root/.npm && \
-    rm -rf /usr/share/doc /usr/share/man
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
 
 # Add browser-specific labels  
 LABEL browser.firefox.available="true" \

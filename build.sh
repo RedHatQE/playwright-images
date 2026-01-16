@@ -2,13 +2,15 @@
 
 set -e
 
-# Enhanced build script with version support
-DOCKERFILE="Dockerfile.multibuild"
+# Enhanced build script with multi-base support
+DEFAULT_BASE="${DEFAULT_BASE:-bookworm}"
 IMAGE_REPO="${IMAGE_REPO:-digitronik/playwright-vnc}"
+CONTAINER_ENGINE="${CONTAINER_ENGINE:-podman}"
 
 # Version handling
 PLAYWRIGHT_VERSION=""
 USE_LATEST_TAG=false
+BASE_IMAGE=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -25,22 +27,32 @@ while [[ $# -gt 0 ]]; do
             IMAGE_REPO="$2"
             shift 2
             ;;
+        --base)
+            BASE_IMAGE="$2"
+            shift 2
+            ;;
         --help)
             echo "Usage: $0 [options] [browser-targets...]"
             echo ""
             echo "Options:"
             echo "  --playwright-version VERSION  Use specific Playwright version"
             echo "  --latest                      Also tag as latest"
-            echo "  --repo REPO                   Docker repository (default: digitronik/playwright-vnc)"
+            echo "  --repo REPO                   Image repository (default: digitronik/playwright-vnc)"
+            echo "  --base BASE                   Base image: bookworm or ubi9 (default: bookworm)"
             echo "  --help                        Show this help"
+            echo ""
+            echo "Environment Variables:"
+            echo "  CONTAINER_ENGINE              podman or docker (default: podman)"
             echo ""
             echo "Browser targets: firefox, chromium, chrome, all (default: all if none specified)"
             echo ""
             echo "Examples:"
-            echo "  $0                                    # Build all browsers with auto-detected latest version"
-            echo "  $0 firefox chrome                     # Build only Firefox and Chrome variants"
-            echo "  $0 --playwright-version 1.50.0 all   # Build all browsers with specific version"
+            echo "  $0                                    # Build all browsers for bookworm"
+            echo "  $0 firefox chrome                     # Build Firefox and Chrome for bookworm"
+            echo "  $0 --base ubi9 firefox                # Build Firefox for UBI9"
+            echo "  $0 --playwright-version 1.57.0 all    # Build all with specific version"
             echo "  $0 --latest firefox                   # Build Firefox and tag as latest"
+            echo "  CONTAINER_ENGINE=docker $0 all        # Use Docker instead of Podman"
             exit 0
             ;;
         -*)
@@ -53,20 +65,41 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Set base image
+if [ -z "$BASE_IMAGE" ]; then
+    BASE_IMAGE="$DEFAULT_BASE"
+fi
+
+# Validate base
+if [[ ! "$BASE_IMAGE" =~ ^(bookworm|ubi9)$ ]]; then
+    echo "Error: Invalid base '$BASE_IMAGE'. Must be 'bookworm' or 'ubi9'"
+    exit 1
+fi
+
+# Set Dockerfile
+DOCKERFILE="docker/Dockerfile.${BASE_IMAGE}"
+
+if [ ! -f "$DOCKERFILE" ]; then
+    echo "Error: Dockerfile not found: $DOCKERFILE"
+    exit 1
+fi
+
 # Auto-detect Playwright version if not specified
 if [ -z "$PLAYWRIGHT_VERSION" ]; then
-    echo "🔍 Auto-detecting latest Playwright version..."
+    echo "Auto-detecting latest Playwright version..."
     if [ -f "scripts/get-playwright-version.sh" ]; then
         PLAYWRIGHT_VERSION=$(scripts/get-playwright-version.sh latest)
-        echo "📦 Detected Playwright version: $PLAYWRIGHT_VERSION"
+        echo "Detected Playwright version: $PLAYWRIGHT_VERSION"
     else
-        echo "⚠️ Warning: Version detection script not found, using default version from Dockerfile"
-        PLAYWRIGHT_VERSION="1.52.0"  # Fallback
+        echo "Warning: Version detection script not found, using default"
+        PLAYWRIGHT_VERSION="1.57.0"
     fi
 fi
 
-# Define all build targets. The key is the target name in the Dockerfile,
-# and the value is the suffix for the image tag.
+# Normalize version (remove 'v' prefix for consistency)
+PLAYWRIGHT_VERSION=$(echo "$PLAYWRIGHT_VERSION" | sed 's/^v//')
+
+# Define all build targets
 declare -A targets
 targets["firefox"]="firefox"
 targets["chromium"]="chromium"
@@ -75,23 +108,23 @@ targets["all"]="all"
 
 # Build metadata
 BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-VCS_REF=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 VERSION="pw-${PLAYWRIGHT_VERSION}"
 
-echo "🚀 Starting Docker image build process..."
-echo "📋 Build Configuration:"
-echo "   Playwright Version: $PLAYWRIGHT_VERSION"
-echo "   Repository: $IMAGE_REPO"
-echo "   Build Date: $BUILD_DATE"
-echo "   VCS Ref: $VCS_REF"
-echo "   Version Tag: $VERSION"
+echo "Starting image build process..."
+echo "Build Configuration:"
+echo "   Base Image:         ${BASE_IMAGE}"
+echo "   Playwright Version: ${PLAYWRIGHT_VERSION}"
+echo "   Repository:         ${IMAGE_REPO}"
+echo "   Container Engine:   ${CONTAINER_ENGINE}"
+echo "   Build Date:         ${BUILD_DATE}"
+echo "   Version Tag:        ${VERSION}"
 
 # Determine which targets to build
 targets_to_build=("$@")
 if [ ${#targets_to_build[@]} -eq 0 ]; then
-    # If no specific targets are provided as arguments, build all of them.
-    targets_to_build=("${!targets[@]}")
-    echo "📦 No specific targets provided. Building all variants: ${targets_to_build[*]}"
+    # If no targets specified, build all in specific order
+    targets_to_build=("firefox" "chromium" "chrome" "all")
+    echo "No specific targets provided. Building all variants: ${targets_to_build[*]}"
 fi
 
 # Function to build and tag images
@@ -99,86 +132,116 @@ build_and_tag() {
     local target="$1"
     local tag_suffix="$2"
     
-    # Tagging strategy: <browser-name>-<playwright-version> or just <playwright-version> for 'all'
-    local primary_tag
-    if [ "$target" = "all" ]; then
-        primary_tag="${IMAGE_REPO}:${PLAYWRIGHT_VERSION}"
-    else
-        primary_tag="${IMAGE_REPO}:${tag_suffix}-${PLAYWRIGHT_VERSION}"
-    fi
-    
     echo ""
-    echo "🏗️ ============================================================"
-    echo "Building target: '$target'  =>  Image: $primary_tag"
+    echo "============================================================"
+    echo "Building target: '$target' for base: '${BASE_IMAGE}'"
     echo "============================================================"
     
-    # Build the image with metadata
-    docker build \
+    # Tagging strategy with base prefix
+    # Primary tag: <base>-<browser>-<version> or <base>-<version> for 'all'
+    local version_tag
+    local latest_tag
+    
+    if [ "$target" = "all" ]; then
+        version_tag="${IMAGE_REPO}:${BASE_IMAGE}-${PLAYWRIGHT_VERSION}"
+        latest_tag="${IMAGE_REPO}:${BASE_IMAGE}-latest"
+    else
+        version_tag="${IMAGE_REPO}:${BASE_IMAGE}-${tag_suffix}-${PLAYWRIGHT_VERSION}"
+        latest_tag="${IMAGE_REPO}:${BASE_IMAGE}-${tag_suffix}-latest"
+    fi
+    
+    echo "Tags to create:"
+    echo "   ${version_tag}"
+    echo "   ${latest_tag}"
+    
+    # Build the image
+    ${CONTAINER_ENGINE} build \
         --file ${DOCKERFILE} \
         --target ${target} \
         --build-arg PLAYWRIGHT_VERSION="${PLAYWRIGHT_VERSION}" \
         --build-arg BUILD_DATE="${BUILD_DATE}" \
-        --build-arg VCS_REF="${VCS_REF}" \
         --build-arg VERSION="${VERSION}" \
-        --tag "${primary_tag}" \
+        --tag "${version_tag}" \
+        --tag "${latest_tag}" \
         .
     
-    echo "✅ Successfully built ${primary_tag}"
+    local build_status=$?
     
-    # Additional tagging logic
-    local tags_created=("${primary_tag}")
-    
-    # Create appropriate latest tags
-    if [ "$target" = "all" ]; then
-        # For 'all' target, create the main 'latest' tag
-        local latest_tag="${IMAGE_REPO}:latest"
-        docker tag "${primary_tag}" "${latest_tag}"
-        tags_created+=("${latest_tag}")
-        echo "🏷️ Tagged as: ${latest_tag} (all browsers)"
+    if [ $build_status -eq 0 ]; then
+        echo "Successfully built ${version_tag}"
+        echo "Successfully tagged ${latest_tag}"
+        
+        # If --latest flag is used and this is bookworm (default base)
+        # create additional simple tags for backward compatibility
+        if [ "$USE_LATEST_TAG" = true ] && [ "$BASE_IMAGE" = "bookworm" ]; then
+            if [ "$target" = "all" ]; then
+                local simple_tag="${IMAGE_REPO}:latest"
+                ${CONTAINER_ENGINE} tag "${version_tag}" "${simple_tag}"
+                echo "Additionally tagged as: ${simple_tag}"
+            else
+                local simple_tag="${IMAGE_REPO}:${tag_suffix}-latest"
+                ${CONTAINER_ENGINE} tag "${version_tag}" "${simple_tag}"
+                echo "Additionally tagged as: ${simple_tag}"
+            fi
+        fi
+        
+        return 0
     else
-        # For specific browsers, create browser-specific latest tag
-        local latest_tag="${IMAGE_REPO}:${tag_suffix}-latest"
-        docker tag "${primary_tag}" "${latest_tag}"
-        tags_created+=("${latest_tag}")
-        echo "🏷️ Tagged as: ${latest_tag}"
+        echo "Build failed for target: $target"
+        return 1
     fi
-    
-    # If --latest flag is used, also create overall latest for 'all' (redundant but kept for compatibility)
-    if [ "$USE_LATEST_TAG" = true ] && [ "$target" = "all" ]; then
-        echo "🏷️ Latest tag already created for all browsers"
-    fi
-    
-    echo "📋 All tags created for $target:"
-    for tag in "${tags_created[@]}"; do
-        echo "   📌 $tag"
-    done
-    
-    return 0
 }
 
-# Loop through the targets and build each one
+# Loop through targets and build
 echo ""
-echo "🔨 Starting build process for ${#targets_to_build[@]} target(s)..."
+echo "Starting build process for ${#targets_to_build[@]} target(s)..."
+
+SUCCESS_COUNT=0
+FAILED_COUNT=0
 
 for target in "${targets_to_build[@]}"; do
-    if [[ -z "${targets[$target]}" ]]; then
-        echo "⚠️ Warning: Unknown build target '$target'. Skipping."
+    # Validate target exists
+    tag_suffix="${targets[$target]}"
+    if [ -z "$tag_suffix" ]; then
+        echo "Warning: Unknown build target '$target'. Skipping."
         continue
     fi
     
-    tag_suffix="${targets[$target]}"
-    build_and_tag "$target" "$tag_suffix"
+    echo ""
+    echo "Building target: ${BASE_IMAGE}/${target}..."
+    
+    # Call build function
+    if build_and_tag "$target" "$tag_suffix"; then
+        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        echo "✓ Success: ${target}"
+    else
+        FAILED_COUNT=$((FAILED_COUNT + 1))
+        echo "✗ Failed: ${target}"
+    fi
 done
 
 echo ""
-echo "🎉 All specified images built successfully!"
+echo "============================================================"
+echo "Build Summary"
+echo "============================================================"
+echo "Base Image:      ${BASE_IMAGE}"
+echo "Playwright:      ${PLAYWRIGHT_VERSION}"
+echo "Total Targets:   ${#targets_to_build[@]}"
+echo "Successful:      ${SUCCESS_COUNT}"
+echo "Failed:          ${FAILED_COUNT}"
 echo ""
-echo "📊 Build Summary:"
-echo "   Playwright Version: $PLAYWRIGHT_VERSION"
-echo "   Targets Built: ${targets_to_build[*]}"
-echo "   Repository: $IMAGE_REPO"
-echo ""
-echo "💡 Next steps:"
-echo "   • Test your images: docker run -p 5900:5900 -p 3000:3000 ${IMAGE_REPO}:latest"
-echo "   • Push to registry: docker push ${IMAGE_REPO} --all-tags"
-echo "   • Connect via VNC: vncviewer localhost:5900"
+
+if [ $FAILED_COUNT -eq 0 ]; then
+    echo "All images built successfully!"
+    echo ""
+    echo "Built images:"
+    ${CONTAINER_ENGINE} images | grep "${IMAGE_REPO}" | grep "${BASE_IMAGE}"
+    echo ""
+    echo "Next steps:"
+    echo "  • Test: ${CONTAINER_ENGINE} run -p 5900:5900 -p 3000:3000 ${IMAGE_REPO}:${BASE_IMAGE}-latest"
+    echo "  • Push: ${CONTAINER_ENGINE} push ${IMAGE_REPO} --all-tags"
+    exit 0
+else
+    echo "Some builds failed. Please check the logs above."
+    exit 1
+fi

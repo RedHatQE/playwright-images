@@ -1,0 +1,200 @@
+# ==============================================================================
+# Playwright with VNC on UBI9 - Multi-Stage Build
+# Purpose: Run Playwright browsers (Firefox, Chromium, Chrome) with VNC access
+# Targets: firefox, chromium, chrome, all
+# ==============================================================================
+
+FROM registry.access.redhat.com/ubi9/nodejs-22:9.7 AS base
+
+# Build arguments
+ARG PLAYWRIGHT_VERSION=v1.57
+ARG BUILD_DATE
+ARG VERSION
+
+# Image metadata
+LABEL org.opencontainers.image.title="Playwright with VNC (UBI9)" \
+      org.opencontainers.image.description="Playwright browsers with VNC server on UBI9" \
+      org.opencontainers.image.url="https://github.com/digitronik/playwright-images" \
+      org.opencontainers.image.source="https://github.com/digitronik/playwright-images" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/nodejs-22:9.7" \
+      org.opencontainers.image.vendor="digitronik" \
+      playwright.version="${PLAYWRIGHT_VERSION}"
+
+# Environment variables
+ENV PW_VERSION=${PLAYWRIGHT_VERSION} \
+    PW_PORT=3000 \
+    PW_BROWSER="chromium" \
+    PW_HEADLESS="false" \
+    DISPLAY=:1 \
+    VNC_PORT=5900 \
+    APP_USER=default \
+    APP_HOME=/opt/app-root \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/app-root/.ms-playwright \
+    DNF_OPTS="--setopt=install_weak_deps=False --setopt=tsflags=nodocs --exclude=nodejs-docs --exclude=nodejs-full-i18n"
+
+USER 0
+
+# Create directories and set permissions
+RUN mkdir -p ${PLAYWRIGHT_BROWSERS_PATH} && \
+    chown -R 1001:0 ${APP_HOME} && \
+    chmod -R g=u ${APP_HOME}
+
+# Add CentOS Stream 9 repositories for GUI/X11 packages
+COPY runtime/centos-stream.repo /etc/yum.repos.d/centos-stream.repo
+
+# Install base system packages
+RUN set -eux; \
+    dnf install -y ${DNF_OPTS} \
+        tigervnc-server-minimal \
+        xterm \
+        liberation-fonts \
+        xorg-x11-fonts-misc \
+        xorg-x11-fonts-Type1 \
+        xorg-x11-fonts-75dpi \
+        xorg-x11-fonts-100dpi \
+        wget
+
+# Copy application files
+COPY --chown=1001:0 runtime/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chown=1001:0 runtime/start-playwright-server.js ${APP_HOME}/start-playwright-server.js
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Expose ports
+EXPOSE ${VNC_PORT} ${PW_PORT}
+
+# Default command
+CMD ["/usr/local/bin/entrypoint.sh"]
+
+# Switch to user for npm operations
+WORKDIR ${APP_HOME}
+USER 1001
+
+# Install Playwright library
+RUN npm config set cache /tmp/npm_cache_pwuser && \
+    npm install playwright@${PW_VERSION} && \
+    rm -rf /tmp/* ~/.npm/_cacache ~/.npm/_logs 2>/dev/null || true
+
+USER 0
+
+# ==============================================================================
+# Firefox Only Target
+# ==============================================================================
+FROM base AS firefox
+ENV PW_BROWSER="firefox"
+
+RUN dnf install -y ${DNF_OPTS} \
+        gtk3 \
+        dbus-glib \
+        libXrandr \
+        libXcursor \
+        libXdamage \
+        libXi \
+        libXcomposite \
+        atk \
+        at-spi2-atk \
+        cups-libs \
+        alsa-lib && \
+    npm config set cache /tmp/npm_cache_root --global && \
+    npx --yes playwright@${PW_VERSION} install firefox && \
+    dnf remove -y nodejs-docs nodejs-full-i18n git-core git-core-doc || true && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+
+LABEL browser.firefox.available="true" \
+      browser.chromium.available="false" \
+      browser.chrome.available="false" \
+      browser.default="firefox"
+
+USER 1001
+
+# ==============================================================================
+# Chromium Only Target
+# ==============================================================================
+FROM base AS chromium
+ENV PW_BROWSER="chromium"
+
+RUN dnf install -y ${DNF_OPTS} \
+        gtk3 \
+        dbus-glib \
+        libXrandr \
+        libXcursor \
+        libXdamage \
+        libXi \
+        libXcomposite \
+        atk \
+        at-spi2-atk \
+        cups-libs \
+        alsa-lib \
+        nss \
+        nspr && \
+    npm config set cache /tmp/npm_cache_root --global && \
+    npx --yes playwright@${PW_VERSION} install chromium && \
+    dnf remove -y nodejs-docs nodejs-full-i18n git-core git-core-doc || true && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+
+LABEL browser.firefox.available="false" \
+      browser.chromium.available="true" \
+      browser.chrome.available="false" \
+      browser.default="chromium"
+
+USER 1001
+
+# ==============================================================================
+# Google Chrome Only Target
+# ==============================================================================
+FROM base AS chrome
+ENV PW_BROWSER="chrome"
+
+RUN cd /tmp && \
+    wget -q --no-check-certificate \
+        https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm && \
+    dnf install -y ${DNF_OPTS} ./google-chrome-stable_current_x86_64.rpm && \
+    google-chrome-stable --version && \
+    rm -f /tmp/*.rpm && \
+    dnf remove -y nodejs-docs nodejs-full-i18n git-core git-core-doc || true && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+
+LABEL browser.firefox.available="false" \
+      browser.chromium.available="false" \
+      browser.chrome.available="true" \
+      browser.default="chrome"
+
+USER 1001
+
+# ==============================================================================
+# All Browsers Target
+# ==============================================================================
+FROM base AS all
+ENV PW_BROWSER="chromium"
+
+RUN set -eux; \
+    cd /tmp; \
+    wget -q --no-check-certificate \
+        https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm; \
+    dnf install -y ${DNF_OPTS} ./google-chrome-stable_current_x86_64.rpm; \
+    google-chrome-stable --version; \
+    rm -f /tmp/*.rpm; \
+    npm config set cache /tmp/npm_cache_root --global; \
+    npx --yes playwright@${PW_VERSION} install firefox chromium; \
+    dnf remove -y nodejs-docs nodejs-full-i18n git-core git-core-doc || true; \
+    dnf clean all; \
+    rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+
+LABEL browser.firefox.available="true" \
+      browser.chromium.available="true" \
+      browser.chrome.available="true" \
+      browser.default="chromium"
+
+USER 1001
