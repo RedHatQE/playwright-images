@@ -1,28 +1,19 @@
 # ==============================================================================
-# Playwright with VNC on UBI9 - Multi-Stage Build
-# Purpose: Run Playwright browsers (Firefox, Chromium, Chrome) with VNC access
+# Playwright with VNC - UBI9 Multi-Stage Build
 # Targets: firefox, chromium, chrome, all
 # ==============================================================================
 
 FROM registry.access.redhat.com/ubi9/nodejs-22:9.7 AS base
 
-# Build arguments
 ARG PLAYWRIGHT_VERSION=v1.57
 ARG BUILD_DATE
 ARG VERSION
-
-# Image metadata
 LABEL org.opencontainers.image.title="Playwright with VNC (UBI9)" \
-      org.opencontainers.image.description="Playwright browsers with VNC server on UBI9" \
+      org.opencontainers.image.description="Playwright browsers with VNC server" \
       org.opencontainers.image.url="https://github.com/digitronik/playwright-images" \
-      org.opencontainers.image.source="https://github.com/digitronik/playwright-images" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/nodejs-22:9.7" \
-      org.opencontainers.image.vendor="digitronik" \
       playwright.version="${PLAYWRIGHT_VERSION}"
-
-# Environment variables
 ENV PW_VERSION=${PLAYWRIGHT_VERSION} \
     PW_PORT=3000 \
     PW_BROWSER="chromium" \
@@ -36,15 +27,13 @@ ENV PW_VERSION=${PLAYWRIGHT_VERSION} \
 
 USER 0
 
-# Create directories and set permissions
 RUN mkdir -p ${PLAYWRIGHT_BROWSERS_PATH} && \
     chown -R 1001:0 ${APP_HOME} && \
     chmod -R g=u ${APP_HOME}
 
-# Add CentOS Stream 9 repositories for GUI/X11 packages
 COPY runtime/centos-stream.repo /etc/yum.repos.d/centos-stream.repo
 
-# Install base system packages
+# System packages (cached layer)
 RUN set -eux; \
     dnf install -y ${DNF_OPTS} \
         tigervnc-server-minimal \
@@ -56,30 +45,31 @@ RUN set -eux; \
         xorg-x11-fonts-100dpi \
         wget
 
-# Copy application files
-COPY --chown=1001:0 runtime/entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY --chown=1001:0 runtime/start-playwright-server.js ${APP_HOME}/start-playwright-server.js
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# Playwright library (cached layer)
+RUN npm config set cache /tmp/npm_cache_global --global && \
+    npm install -g playwright@${PW_VERSION} && \
+    rm -rf /tmp/* /root/.npm/_cacache /root/.npm/_logs 2>/dev/null || true
 
-# Expose ports
-EXPOSE ${VNC_PORT} ${PW_PORT}
-
-# Default command
-CMD ["/usr/local/bin/entrypoint.sh"]
-
-# Switch to user for npm operations
-WORKDIR ${APP_HOME}
 USER 1001
-
-# Install Playwright library
-RUN npm config set cache /tmp/npm_cache_pwuser && \
+WORKDIR ${APP_HOME}
+RUN npm config set cache /tmp/npm_cache_user && \
     npm install playwright@${PW_VERSION} && \
     rm -rf /tmp/* ~/.npm/_cacache ~/.npm/_logs 2>/dev/null || true
 
 USER 0
 
+# Runtime files (late - fast rebuild on changes)
+COPY --chown=1001:0 runtime/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chown=1001:0 runtime/start-playwright-server.js ${APP_HOME}/start-playwright-server.js
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE ${VNC_PORT} ${PW_PORT}
+CMD ["/usr/local/bin/entrypoint.sh"]
+
+USER 0
+
 # ==============================================================================
-# Firefox Only Target
+# Target: Firefox
 # ==============================================================================
 FROM base AS firefox
 ENV PW_BROWSER="firefox"
@@ -98,7 +88,11 @@ RUN dnf install -y ${DNF_OPTS} \
         alsa-lib && \
     npm config set cache /tmp/npm_cache_root --global && \
     npx --yes playwright@${PW_VERSION} install firefox && \
-    dnf remove -y nodejs-docs nodejs-full-i18n git-core git-core-doc || true && \
+    dnf remove -y \
+        nodejs-docs nodejs-full-i18n git-core git-core-doc \
+        gcc gcc-c++ cpp binutils binutils-gold \
+        kernel-headers glibc-devel glibc-headers libxcrypt-devel libstdc++-devel \
+        || true && \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
            /tmp/npm_cache_root /root/.npm \
@@ -112,7 +106,7 @@ LABEL browser.firefox.available="true" \
 USER 1001
 
 # ==============================================================================
-# Chromium Only Target
+# Target: Chromium
 # ==============================================================================
 FROM base AS chromium
 ENV PW_BROWSER="chromium"
@@ -133,7 +127,12 @@ RUN dnf install -y ${DNF_OPTS} \
         nspr && \
     npm config set cache /tmp/npm_cache_root --global && \
     npx --yes playwright@${PW_VERSION} install chromium && \
-    dnf remove -y nodejs-docs nodejs-full-i18n git-core git-core-doc || true && \
+    echo "Removing build tools and unnecessary packages..." && \
+    dnf remove -y \
+        nodejs-docs nodejs-full-i18n git-core git-core-doc \
+        gcc gcc-c++ cpp binutils binutils-gold \
+        kernel-headers glibc-devel glibc-headers libxcrypt-devel libstdc++-devel \
+        || true && \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
            /tmp/npm_cache_root /root/.npm \
@@ -147,7 +146,7 @@ LABEL browser.firefox.available="false" \
 USER 1001
 
 # ==============================================================================
-# Google Chrome Only Target
+# Target: Chrome
 # ==============================================================================
 FROM base AS chrome
 ENV PW_BROWSER="chrome"
@@ -155,10 +154,16 @@ ENV PW_BROWSER="chrome"
 RUN cd /tmp && \
     wget -q --no-check-certificate \
         https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm && \
-    dnf install -y ${DNF_OPTS} ./google-chrome-stable_current_x86_64.rpm && \
+    dnf install -y ${DNF_OPTS} ./google-chrome-stable_current_x86_64.rpm 2>&1 | \
+        grep -v "error: can't create transaction lock" | grep -v "error: .* key .* import failed" && \
     google-chrome-stable --version && \
     rm -f /tmp/*.rpm && \
-    dnf remove -y nodejs-docs nodejs-full-i18n git-core git-core-doc || true && \
+    echo "Removing build tools and unnecessary packages..." && \
+    dnf remove -y \
+        nodejs-docs nodejs-full-i18n git-core git-core-doc \
+        gcc gcc-c++ cpp binutils binutils-gold \
+        kernel-headers glibc-devel glibc-headers libxcrypt-devel libstdc++-devel \
+        || true && \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
            /tmp/npm_cache_root /root/.npm \
@@ -172,7 +177,7 @@ LABEL browser.firefox.available="false" \
 USER 1001
 
 # ==============================================================================
-# All Browsers Target
+# Target: All Browsers
 # ==============================================================================
 FROM base AS all
 ENV PW_BROWSER="chromium"
@@ -181,12 +186,18 @@ RUN set -eux; \
     cd /tmp; \
     wget -q --no-check-certificate \
         https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm; \
-    dnf install -y ${DNF_OPTS} ./google-chrome-stable_current_x86_64.rpm; \
+    dnf install -y ${DNF_OPTS} ./google-chrome-stable_current_x86_64.rpm 2>&1 | \
+        grep -v "error: can't create transaction lock" | grep -v "error: .* key .* import failed" || true; \
     google-chrome-stable --version; \
     rm -f /tmp/*.rpm; \
     npm config set cache /tmp/npm_cache_root --global; \
     npx --yes playwright@${PW_VERSION} install firefox chromium; \
-    dnf remove -y nodejs-docs nodejs-full-i18n git-core git-core-doc || true; \
+    echo "Removing build tools and unnecessary packages..."; \
+    dnf remove -y \
+        nodejs-docs nodejs-full-i18n git-core git-core-doc \
+        gcc gcc-c++ cpp binutils binutils-gold \
+        kernel-headers glibc-devel glibc-headers libxcrypt-devel libstdc++-devel \
+        || true; \
     dnf clean all; \
     rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
            /tmp/npm_cache_root /root/.npm \

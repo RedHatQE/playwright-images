@@ -23,19 +23,17 @@ cleanup() {
     log_info "Received shutdown signal, cleaning up..."
     
     # Kill child processes
-    if [ ! -z "$PLAYWRIGHT_PID" ] && kill -0 $PLAYWRIGHT_PID 2>/dev/null; then
+    if [ -n "$PLAYWRIGHT_PID" ] && kill -0 $PLAYWRIGHT_PID 2>/dev/null; then
         log_info "Stopping Playwright server (PID: $PLAYWRIGHT_PID)..."
         kill -TERM $PLAYWRIGHT_PID 2>/dev/null || true
+        wait $PLAYWRIGHT_PID 2>/dev/null || true
     fi
     
-    if [ ! -z "$VNC_PID" ] && kill -0 $VNC_PID 2>/dev/null; then
+    if [ -n "$VNC_PID" ] && kill -0 $VNC_PID 2>/dev/null; then
         log_info "Stopping VNC server (PID: $VNC_PID)..."
         kill -TERM $VNC_PID 2>/dev/null || true
+        wait $VNC_PID 2>/dev/null || true
     fi
-    
-    # Wait for processes to terminate gracefully
-    wait $PLAYWRIGHT_PID 2>/dev/null || true
-    wait $VNC_PID 2>/dev/null || true
     
     log_info "Cleanup complete. Exiting."
     exit 0
@@ -51,30 +49,37 @@ log_info "Playwright Port: ${PW_PORT}"
 log_info "Browser: ${PW_BROWSER}"
 log_info "Headless Mode: ${PW_HEADLESS}"
 
-# Start VNC server
-log_info "Starting VNC server on ${DISPLAY}..."
-Xvnc ${DISPLAY} \
-    -geometry 1280x1024 \
-    -depth 24 \
-    -rfbport ${VNC_PORT} \
-    -SecurityTypes None \
-    -AlwaysShared \
-    -verbose \
-    -Log *:stdout:100 \
-    -fp catalogue:/etc/X11/fontpath.d,/usr/share/fonts/X11/misc/,/usr/share/fonts/X11/Type1/ \
-    -pn &
+# Start VNC server only if not in headless mode
+# Handle various truthy values: true, True, TRUE, 1, yes, etc.
+PW_HEADLESS_LOWER=$(echo "${PW_HEADLESS}" | tr '[:upper:]' '[:lower:]')
+if [ "${PW_HEADLESS_LOWER}" != "true" ] && [ "${PW_HEADLESS}" != "1" ]; then
+    log_info "Starting VNC server on ${DISPLAY}..."
+    Xvnc ${DISPLAY} \
+        -geometry 1280x1024 \
+        -depth 24 \
+        -rfbport ${VNC_PORT} \
+        -SecurityTypes None \
+        -AlwaysShared \
+        -verbose \
+        -Log *:stdout:100 \
+        -fp catalogue:/etc/X11/fontpath.d,/usr/share/fonts/X11/misc/,/usr/share/fonts/X11/Type1/ \
+        -pn &
 
-VNC_PID=$!
+    VNC_PID=$!
 
-# Check if VNC started successfully
-sleep 2
-if ! kill -0 $VNC_PID 2>/dev/null; then
-    log_error "VNC server failed to start!"
-    exit 1
+    # Check if VNC started successfully
+    sleep 2
+    if ! kill -0 $VNC_PID 2>/dev/null; then
+        log_error "VNC server failed to start!"
+        exit 1
+    fi
+
+    log_info "VNC server started successfully (PID: $VNC_PID)"
+    log_info "Note: Running without window manager (browsers work fine)"
+else
+    log_info "Headless mode enabled - skipping VNC server"
+    VNC_PID=""
 fi
-
-log_info "VNC server started successfully (PID: $VNC_PID)"
-log_info "Note: Running without window manager (browsers work fine)"
 
 # Start Playwright server
 log_info "Starting Playwright server..."
@@ -97,17 +102,21 @@ log_info "Playwright endpoint: ws://localhost:${PW_PORT}/playwright"
 
 # Monitor processes
 while true; do
-    # Check if VNC is still running
-    if ! kill -0 $VNC_PID 2>/dev/null; then
-        log_error "VNC server died unexpectedly!"
-        kill -TERM $PLAYWRIGHT_PID 2>/dev/null || true
-        exit 1
+    # Check if VNC is still running (only if it was started)
+    if [ -n "$VNC_PID" ]; then
+        if ! kill -0 $VNC_PID 2>/dev/null; then
+            log_error "VNC server died unexpectedly!"
+            kill -TERM $PLAYWRIGHT_PID 2>/dev/null || true
+            exit 1
+        fi
     fi
     
     # Check if Playwright is still running
     if ! kill -0 $PLAYWRIGHT_PID 2>/dev/null; then
         log_error "Playwright server died unexpectedly!"
-        kill -TERM $VNC_PID 2>/dev/null || true
+        if [ -n "$VNC_PID" ]; then
+            kill -TERM $VNC_PID 2>/dev/null || true
+        fi
         exit 1
     fi
     
