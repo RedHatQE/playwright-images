@@ -1,0 +1,164 @@
+# ==============================================================================
+# Playwright with VNC - Bookworm Multi-Stage Build
+# Targets: firefox, chromium, chrome, all
+# ==============================================================================
+
+FROM node:22-bookworm-slim AS base
+
+ARG PLAYWRIGHT_VERSION=1.52.0
+ARG BUILD_DATE
+ARG VERSION
+ENV PW_VERSION=${PLAYWRIGHT_VERSION} \
+    PW_PORT=3000 \
+    PW_BROWSER="chromium" \
+    PW_HEADLESS="false" \
+    DISPLAY=:1 \
+    VNC_PORT=5900 \
+    APP_USER=pwuser \
+    APP_HOME=/home/pwuser \
+    PLAYWRIGHT_BROWSERS_PATH=/home/pwuser/.ms-playwright
+
+LABEL org.opencontainers.image.title="Playwright with VNC (Bookworm)" \
+      org.opencontainers.image.description="Playwright browsers with VNC server" \
+      org.opencontainers.image.url="https://github.com/digitronik/playwright-images" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      playwright.version="${PLAYWRIGHT_VERSION}"
+
+# Exclude documentation from packages
+RUN echo 'path-exclude /usr/share/doc/*' > /etc/dpkg/dpkg.cfg.d/01_nodoc && \
+    echo 'path-exclude /usr/share/man/*' >> /etc/dpkg/dpkg.cfg.d/01_nodoc && \
+    echo 'path-exclude /usr/share/groff/*' >> /etc/dpkg/dpkg.cfg.d/01_nodoc && \
+    echo 'path-exclude /usr/share/info/*' >> /etc/dpkg/dpkg.cfg.d/01_nodoc && \
+    echo 'path-exclude /usr/share/lintian/*' >> /etc/dpkg/dpkg.cfg.d/01_nodoc && \
+    echo 'path-exclude /usr/share/linda/*' >> /etc/dpkg/dpkg.cfg.d/01_nodoc
+
+RUN useradd --create-home --shell /bin/bash --uid 1001 ${APP_USER} && \
+    mkdir -p ${PLAYWRIGHT_BROWSERS_PATH} && \
+    chown -R ${APP_USER}:${APP_USER} ${APP_HOME}
+
+# System packages (cached layer)
+RUN set -e; \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        tigervnc-standalone-server \
+        xterm \
+        fonts-liberation \
+        xfonts-base \
+        xfonts-75dpi \
+        xfonts-100dpi \
+        xfonts-scalable \
+        wget \
+        ca-certificates && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+
+# Playwright library (cached layer)
+RUN npm config set cache /tmp/npm_cache_global --global && \
+    npm install -g playwright@${PW_VERSION} && \
+    rm -rf /tmp/* /root/.npm 2>/dev/null || true
+
+USER ${APP_USER}
+WORKDIR ${APP_HOME}
+RUN npm config set cache /tmp/npm_cache_user && \
+    npm install playwright@${PW_VERSION} && \
+    rm -rf /tmp/* ~/.npm 2>/dev/null || true
+
+USER root
+
+# Runtime files (late - fast rebuild on changes)
+COPY --chown=${APP_USER}:${APP_USER} runtime/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chown=${APP_USER}:${APP_USER} runtime/start-playwright-server.js ${APP_HOME}/start-playwright-server.js
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE ${VNC_PORT} ${PW_PORT}
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD pgrep -f "Xvnc.*${DISPLAY}" > /dev/null && pgrep -f "start-playwright-server" > /dev/null || exit 1
+
+CMD ["/usr/local/bin/entrypoint.sh"]
+
+USER root
+
+# ==============================================================================
+# Target: Firefox
+# ==============================================================================
+FROM base AS firefox
+ENV PW_BROWSER="firefox"
+
+RUN npm config set cache /tmp/npm_cache_root --global && \
+    npx --yes playwright@${PW_VERSION} install --with-deps firefox && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+
+LABEL browser.firefox.available="true" \
+      browser.chromium.available="false" \
+      browser.chrome.available="false" \
+      browser.default="firefox"
+
+USER ${APP_USER}
+
+# ==============================================================================
+# Target: Chromium
+# ==============================================================================
+FROM base AS chromium
+ENV PW_BROWSER="chromium"
+
+RUN npm config set cache /tmp/npm_cache_root --global && \
+    npx --yes playwright@${PW_VERSION} install --with-deps chromium && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+
+LABEL browser.firefox.available="false" \
+      browser.chromium.available="true" \
+      browser.chrome.available="false" \
+      browser.default="chromium"
+
+USER ${APP_USER}
+
+# ==============================================================================
+# Target: Chrome
+# ==============================================================================
+FROM base AS chrome
+ENV PW_BROWSER="chrome"
+
+RUN npm config set cache /tmp/npm_cache_root --global && \
+    npx --yes playwright@${PW_VERSION} install --with-deps chrome && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+
+LABEL browser.firefox.available="false" \
+      browser.chromium.available="false" \
+      browser.chrome.available="true" \
+      browser.default="chrome"
+
+USER ${APP_USER}
+
+# ==============================================================================
+# Target: All Browsers
+# ==============================================================================
+FROM base AS all
+
+RUN npm config set cache /tmp/npm_cache_root --global && \
+    npx --yes playwright@${PW_VERSION} install --with-deps firefox chromium chrome && \
+    apt-get autoremove -y && apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* \
+           /tmp/npm_cache_root /root/.npm \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+
+LABEL browser.firefox.available="true" \
+      browser.chromium.available="true" \
+      browser.chrome.available="true" \
+      browser.default="chromium"
+
+USER ${APP_USER}
