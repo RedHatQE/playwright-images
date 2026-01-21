@@ -1,0 +1,56 @@
+name: 🔍 Check Playwright Version
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Get all tags
+
+      - name: Check for new Playwright version
+        run: |
+          echo "🔍 Checking for new Playwright version..."
+          
+          # Get latest Playwright version
+          LATEST_VERSION=$(./scripts/get-playwright-version.sh latest)
+          echo "Latest Playwright version: ${LATEST_VERSION}"
+          
+          # Check if git tag exists
+          if git rev-parse "v${LATEST_VERSION}" >/dev/null 2>&1; then
+            echo "ℹ️ Tag v${LATEST_VERSION} already exists. No action needed."
+            exit 0
+          fi
+          
+          echo "✨ New version detected: v${LATEST_VERSION}"
+          
+          # Check if images already exist on Docker Hub
+          if docker manifest inspect digitronik/playwright-vnc:bookworm-${LATEST_VERSION} >/dev/null 2>&1; then
+            echo "ℹ️ Images for v${LATEST_VERSION} already exist on Docker Hub. Creating tag only."
+          else
+            echo "🚀 New version ${LATEST_VERSION} - will trigger build!"
+          fi
+          
+          # Create git tag
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a "v${LATEST_VERSION}" -m "Playwright version ${LATEST_VERSION}
+
+          Auto-detected new Playwright release.
+          This tag will trigger the build workflow."
+          
+          git push origin "v${LATEST_VERSION}"
+          
+          echo "✅ Tag v${LATEST_VERSION} created and pushed"
+          echo "🔄 Build workflow will be triggered automatically"
