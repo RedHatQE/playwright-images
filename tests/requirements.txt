@@ -1,4 +1,4 @@
-playwright==1.57.0
+playwright
 pytest>=7.0.0
 pytest-timeout>=2.1.0
 wait-for>=1.2.0
