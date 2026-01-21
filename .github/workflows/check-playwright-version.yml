@@ -18,6 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Get all tags
+          token: ${{ secrets.WORKFLOW_TOKEN }}  # Required to trigger workflows on tag push
 
       - name: Check for new Playwright version
         run: |

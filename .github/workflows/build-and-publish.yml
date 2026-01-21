@@ -75,7 +75,12 @@ jobs:
         run: |
           echo "🧪 Testing ${{ matrix.base }} images..."
           
-          # Install test dependencies
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # Install playwright with matching version FIRST (before requirements.txt)
+          pip install playwright==${VERSION}
+          
+          # Then install other test dependencies
           pip install -r tests/requirements.txt
           
           # Test only this base's images (skip headless for CI speed)
