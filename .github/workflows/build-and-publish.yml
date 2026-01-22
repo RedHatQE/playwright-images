@@ -84,7 +84,7 @@ jobs:
           pip install -r tests/requirements.txt
           
           # Test only this base's images (skip headless for CI speed)
-          CONTAINER_ENGINE=docker pytest tests/ -v -k "${{ matrix.base }} and not headless" --tb=short
+          CONTAINER_ENGINE=docker pytest tests/ -v -k "${{ matrix.base }}" --tb=short
           
           echo "✅ ${{ matrix.base }} tests passed"
 

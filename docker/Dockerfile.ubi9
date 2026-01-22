@@ -10,7 +10,7 @@ ARG BUILD_DATE
 ARG VERSION
 LABEL org.opencontainers.image.title="Playwright with VNC (UBI9)" \
       org.opencontainers.image.description="Playwright browsers with VNC server" \
-      org.opencontainers.image.url="https://github.com/digitronik/playwright-images" \
+      org.opencontainers.image.url="https://github.com/RedHatQE/playwright-images" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       playwright.version="${PLAYWRIGHT_VERSION}"

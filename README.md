@@ -32,7 +32,7 @@ docker run -p 5900:5900 -p 3000:3000 digitronik/playwright-vnc:ubi9-latest
 vncviewer localhost:5900
 ```
 
-**See [Releases](https://github.com/digitronik/playwright-images/releases) for version history and [Docker Hub](https://hub.docker.com/r/digitronik/playwright-vnc/tags) for all available tags.**
+**See [Releases](https://github.com/RedHatQE/playwright-images/releases) for version history and [Docker Hub](https://hub.docker.com/r/digitronik/playwright-vnc/tags) for all available tags.**
 
 ## How to Build Images Locally
 
