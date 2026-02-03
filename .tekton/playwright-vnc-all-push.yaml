@@ -28,6 +28,8 @@ spec:
     value: docker/Dockerfile.ubi9
   - name: path-context
     value: .
+  - name: BUILD_ARGS
+    value: "--target all"
   pipelineSpec:
     description: |
       This pipeline is ideal for building container images from a Containerfile while maintaining trust after pipeline customization.
@@ -104,6 +106,10 @@ spec:
       description: Whether to enable privileged mode, should be used only with remote
         VMs
       name: privileged-nested
+      type: string
+    - default: "--target all"
+      name: BUILD_ARGS
+      description: Pick and build for specific target from multistage build
       type: string
     results:
     - description: ""
