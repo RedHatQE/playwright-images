@@ -3,7 +3,7 @@
 # Targets: firefox, chromium, chrome, all
 # ==============================================================================
 
-FROM registry.access.redhat.com/ubi9/nodejs-22:9.7 AS base
+FROM registry.access.redhat.com/ubi9/nodejs-22:9.7-1772440444 AS base
 
 ARG PLAYWRIGHT_VERSION=v1.57
 ARG BUILD_DATE
