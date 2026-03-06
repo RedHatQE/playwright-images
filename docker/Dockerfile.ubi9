@@ -1,6 +1,7 @@
 # ==============================================================================
 # Playwright with VNC - UBI9 Multi-Stage Build
-# Targets: firefox, chromium, chrome, all
+# Targets: firefox, chromium, all
+# Note: Google Chrome is not available for UBI9 (RPM signing policy restriction)
 # ==============================================================================
 
 FROM registry.access.redhat.com/ubi9/nodejs-22:9.7 AS base
@@ -34,16 +35,37 @@ RUN mkdir -p ${PLAYWRIGHT_BROWSERS_PATH} && \
 COPY runtime/centos-stream.repo /etc/yum.repos.d/centos-stream.repo
 
 # System packages (cached layer)
+# Common browser dependencies for both Firefox and Chromium Ubuntu fallback builds
+# Playwright uses Ubuntu fallback builds on RHEL/UBI9 - these RHEL packages satisfy them
 RUN set -eux; \
     dnf install -y ${DNF_OPTS} \
+        # VNC + X11 server
         tigervnc-server-minimal \
-        xterm \
         liberation-fonts \
-        xorg-x11-fonts-misc \
-        xorg-x11-fonts-Type1 \
-        xorg-x11-fonts-75dpi \
-        xorg-x11-fonts-100dpi \
-        wget
+        wget \
+        # GTK3 stack (required by both Firefox and Chromium)
+        gtk3 \
+        dbus-glib \
+        atk \
+        at-spi2-atk \
+        # X11 libraries (required by both browsers)
+        libXrandr \
+        libXcursor \
+        libXdamage \
+        libXi \
+        libXcomposite \
+        # Audio / printing (required by both browsers)
+        alsa-lib \
+        cups-libs && \
+    # Remove build tools pulled in by base image (saves ~171 MB)
+    dnf remove -y \
+        nodejs-docs nodejs-full-i18n git-core git-core-doc \
+        gcc gcc-c++ cpp binutils binutils-gold \
+        kernel-headers glibc-devel glibc-headers libxcrypt-devel libstdc++-devel \
+        || true && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/cache/yum \
+           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
 
 # Playwright library (cached layer)
 RUN npm config set cache /tmp/npm_cache_global --global && \
@@ -70,33 +92,14 @@ USER 0
 
 # ==============================================================================
 # Target: Firefox
+# Common deps inherited from base - just install the browser
 # ==============================================================================
 FROM base AS firefox
 ENV PW_BROWSER="firefox"
 
-RUN dnf install -y ${DNF_OPTS} \
-        gtk3 \
-        dbus-glib \
-        libXrandr \
-        libXcursor \
-        libXdamage \
-        libXi \
-        libXcomposite \
-        atk \
-        at-spi2-atk \
-        cups-libs \
-        alsa-lib && \
-    npm config set cache /tmp/npm_cache_root --global && \
+RUN npm config set cache /tmp/npm_cache_root --global && \
     npx --yes playwright@${PW_VERSION} install firefox && \
-    dnf remove -y \
-        nodejs-docs nodejs-full-i18n git-core git-core-doc \
-        gcc gcc-c++ cpp binutils binutils-gold \
-        kernel-headers glibc-devel glibc-headers libxcrypt-devel libstdc++-devel \
-        || true && \
-    dnf clean all && \
-    rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
-           /tmp/npm_cache_root /root/.npm \
-           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+    rm -rf /tmp/* /var/tmp/* /tmp/npm_cache_root /root/.npm
 
 LABEL browser.firefox.available="true" \
       browser.chromium.available="false" \
@@ -107,36 +110,19 @@ USER 1001
 
 # ==============================================================================
 # Target: Chromium
+# Adds nss/nspr on top of base (Chromium uses system NSS; Firefox bundles its own)
 # ==============================================================================
 FROM base AS chromium
 ENV PW_BROWSER="chromium"
 
 RUN dnf install -y ${DNF_OPTS} \
-        gtk3 \
-        dbus-glib \
-        libXrandr \
-        libXcursor \
-        libXdamage \
-        libXi \
-        libXcomposite \
-        atk \
-        at-spi2-atk \
-        cups-libs \
-        alsa-lib \
         nss \
         nspr && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/cache/yum && \
     npm config set cache /tmp/npm_cache_root --global && \
     npx --yes playwright@${PW_VERSION} install chromium && \
-    echo "Removing build tools and unnecessary packages..." && \
-    dnf remove -y \
-        nodejs-docs nodejs-full-i18n git-core git-core-doc \
-        gcc gcc-c++ cpp binutils binutils-gold \
-        kernel-headers glibc-devel glibc-headers libxcrypt-devel libstdc++-devel \
-        || true && \
-    dnf clean all && \
-    rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
-           /tmp/npm_cache_root /root/.npm \
-           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+    rm -rf /tmp/* /var/tmp/* /tmp/npm_cache_root /root/.npm
 
 LABEL browser.firefox.available="false" \
       browser.chromium.available="true" \
@@ -146,66 +132,23 @@ LABEL browser.firefox.available="false" \
 USER 1001
 
 # ==============================================================================
-# Target: Chrome
-# ==============================================================================
-FROM base AS chrome
-ENV PW_BROWSER="chrome"
-
-RUN cd /tmp && \
-    wget -q --no-check-certificate \
-        https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm && \
-    dnf install -y ${DNF_OPTS} ./google-chrome-stable_current_x86_64.rpm 2>&1 | \
-        grep -v "error: can't create transaction lock" | grep -v "error: .* key .* import failed" && \
-    google-chrome-stable --version && \
-    rm -f /tmp/*.rpm && \
-    echo "Removing build tools and unnecessary packages..." && \
-    dnf remove -y \
-        nodejs-docs nodejs-full-i18n git-core git-core-doc \
-        gcc gcc-c++ cpp binutils binutils-gold \
-        kernel-headers glibc-devel glibc-headers libxcrypt-devel libstdc++-devel \
-        || true && \
-    dnf clean all && \
-    rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
-           /tmp/npm_cache_root /root/.npm \
-           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
-
-LABEL browser.firefox.available="false" \
-      browser.chromium.available="false" \
-      browser.chrome.available="true" \
-      browser.default="chrome"
-
-USER 1001
-
-# ==============================================================================
-# Target: All Browsers
+# Target: All Browsers (Firefox + Chromium only for UBI9)
 # ==============================================================================
 FROM base AS all
 ENV PW_BROWSER="chromium"
 
-RUN set -eux; \
-    cd /tmp; \
-    wget -q --no-check-certificate \
-        https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm; \
-    dnf install -y ${DNF_OPTS} ./google-chrome-stable_current_x86_64.rpm 2>&1 | \
-        grep -v "error: can't create transaction lock" | grep -v "error: .* key .* import failed" || true; \
-    google-chrome-stable --version; \
-    rm -f /tmp/*.rpm; \
-    npm config set cache /tmp/npm_cache_root --global; \
-    npx --yes playwright@${PW_VERSION} install firefox chromium; \
-    echo "Removing build tools and unnecessary packages..."; \
-    dnf remove -y \
-        nodejs-docs nodejs-full-i18n git-core git-core-doc \
-        gcc gcc-c++ cpp binutils binutils-gold \
-        kernel-headers glibc-devel glibc-headers libxcrypt-devel libstdc++-devel \
-        || true; \
-    dnf clean all; \
-    rm -rf /var/cache/dnf /var/cache/yum /tmp/* /var/tmp/* \
-           /tmp/npm_cache_root /root/.npm \
-           /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* /usr/share/i18n
+RUN dnf install -y ${DNF_OPTS} \
+        nss \
+        nspr && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/cache/yum && \
+    npm config set cache /tmp/npm_cache_root --global && \
+    npx --yes playwright@${PW_VERSION} install firefox chromium && \
+    rm -rf /tmp/* /var/tmp/* /tmp/npm_cache_root /root/.npm
 
 LABEL browser.firefox.available="true" \
       browser.chromium.available="true" \
-      browser.chrome.available="true" \
+      browser.chrome.available="false" \
       browser.default="chromium"
 
 USER 1001

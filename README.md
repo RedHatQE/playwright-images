@@ -13,8 +13,8 @@ This project solves that problem by providing a lightweight, VNC-enabled environ
 - VNC Server Built-in: Connect with any VNC client to view and interact with the browser
 - Headed Mode by Default: Designed specifically for running browsers with their UI visible
 - Dual-Base Support: Choose Debian Bookworm or Red Hat UBI9
-- Multiple Browser Variants: Build tailored images for Firefox, Chromium, or Google Chrome
-- All-in-One Image: An all variant includes all three browsers for maximum flexibility
+- Multiple Browser Variants: Build tailored images for Firefox, Chromium, or Google Chrome (Bookworm only)
+- All-in-One Image: An all variant includes Firefox + Chromium (+ Chrome for Bookworm)
 - Optimized for Size: Multi-stage Dockerfile and careful package selection to keep images lean
 - Configurable: Control the browser type and headless mode at runtime with environment variables
 - Automated Builds: Daily CI/CD pipeline builds latest Playwright versions automatically
@@ -47,7 +47,7 @@ vncviewer localhost:5900
 
 # Build specific browsers
 ./build.sh firefox chrome
-./build.sh --base ubi9 firefox
+./build.sh --base ubi9 firefox  # Chrome not available for ubi9
 
 # Build with specific Playwright version
 ./build.sh --playwright-version 1.58.0
@@ -57,14 +57,15 @@ vncviewer localhost:5900
 
 | Base | Image Tag | Default Browser | Installed Browsers |
 |------|-----------|-----------------|-------------------|
-| Bookworm | `:bookworm-latest` | Chromium | All browsers (Firefox, Chromium, Chrome) |
+| Bookworm | `:bookworm-latest` | Chromium | Firefox, Chromium, Chrome |
 | Bookworm | `:bookworm-firefox-latest` | Firefox | Playwright's Firefox |
 | Bookworm | `:bookworm-chromium-latest`| Chromium | Playwright's Chromium |
 | Bookworm | `:bookworm-chrome-latest` | Google Chrome | Google Chrome (Stable) |
-| UBI9 | `:ubi9-latest` | Chromium | All browsers (Firefox, Chromium, Chrome) |
+| UBI9 | `:ubi9-latest` | Chromium | Firefox, Chromium |
 | UBI9 | `:ubi9-firefox-latest` | Firefox | Playwright's Firefox |
 | UBI9 | `:ubi9-chromium-latest`| Chromium | Playwright's Chromium |
-| UBI9 | `:ubi9-chrome-latest` | Google Chrome | Google Chrome (Stable) |
+
+> **Note**: Google Chrome is not available for UBI9 images due to RPM signing policy restrictions.
 
 ## How to Run the Images
 
@@ -74,8 +75,8 @@ Use docker/podman to start a container. Map VNC port (5900) and Playwright serve
 # Run specific browser image
 docker run -p 5900:5900 -p 3000:3000 digitronik/playwright-vnc:bookworm-firefox-latest
 
-# Run UBI9 all-browsers image with specific browser selection
-docker run -e PW_BROWSER="chrome" -p 5900:5900 -p 3000:3000 digitronik/playwright-vnc:ubi9-latest
+# Run UBI9 all-browsers image with specific browser selection (firefox or chromium)
+docker run -e PW_BROWSER="firefox" -p 5900:5900 -p 3000:3000 quay.io/redhatqe/playwright-vnc:ubi9-latest
 
 # Run in headless mode  
 docker run -e PW_HEADLESS="true" -p 3000:3000 digitronik/playwright-vnc:bookworm-firefox-latest
@@ -83,7 +84,7 @@ docker run -e PW_HEADLESS="true" -p 3000:3000 digitronik/playwright-vnc:bookworm
 
 ### Environment Variables
 
-- `PW_BROWSER`: Specify browser (`firefox`, `chromium`, `chrome`) 
+- `PW_BROWSER`: Specify browser (`firefox`, `chromium`, `chrome`) - Chrome only available for Bookworm
 - `PW_HEADLESS`: Run in headless mode (`true`/`false`, default: `false`)
 
 ### Connecting with a VNC Client
