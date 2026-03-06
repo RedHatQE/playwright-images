@@ -123,8 +123,24 @@ echo "   Version Tag:        ${VERSION}"
 targets_to_build=("$@")
 if [ ${#targets_to_build[@]} -eq 0 ]; then
     # If no targets specified, build all in specific order
-    targets_to_build=("firefox" "chromium" "chrome" "all")
+    # Note: chrome is not available for ubi9 (RPM signing policy restriction)
+    if [ "$BASE_IMAGE" = "ubi9" ]; then
+        targets_to_build=("firefox" "chromium" "all")
+    else
+        targets_to_build=("firefox" "chromium" "chrome" "all")
+    fi
     echo "No specific targets provided. Building all variants: ${targets_to_build[*]}"
+fi
+
+# Validate chrome target is not requested for ubi9
+if [ "$BASE_IMAGE" = "ubi9" ]; then
+    for t in "${targets_to_build[@]}"; do
+        if [ "$t" = "chrome" ]; then
+            echo "Error: Chrome target is not available for UBI9 (RPM signing policy restriction)"
+            echo "Available targets for ubi9: firefox, chromium, all"
+            exit 1
+        fi
+    done
 fi
 
 # Function to build and tag images

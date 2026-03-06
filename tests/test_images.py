@@ -17,24 +17,16 @@ TEST_URL = "https://example.com"
 CONTAINER_ENGINE = os.environ.get("CONTAINER_ENGINE", "podman")
 
 # All image variants
+# Note: ubi9 does not ship Google Chrome (RPM signing policy restriction)
 IMAGES = [
-    ("bookworm", "firefox"),
-    ("bookworm", "chromium"),
-    ("bookworm", "chrome"),
-    ("bookworm", "all"),
-    ("ubi9", "firefox"),
-    ("ubi9", "chromium"),
-    ("ubi9", "chrome"),
-    ("ubi9", "all"),
+    ("bookworm", "firefox",  ["firefox"]),
+    ("bookworm", "chromium", ["chromium"]),
+    ("bookworm", "chrome",   ["chrome"]),
+    ("bookworm", "all",      ["firefox", "chromium", "chrome"]),
+    ("ubi9",     "firefox",  ["firefox"]),
+    ("ubi9",     "chromium", ["chromium"]),
+    ("ubi9",     "all",      ["firefox", "chromium"]),  # No chrome for UBI9
 ]
-
-# Browser mappings for each target
-BROWSERS = {
-    "firefox": ["firefox"],
-    "chromium": ["chromium"],
-    "chrome": ["chrome"],
-    "all": ["firefox", "chromium", "chrome"],
-}
 
 
 def start_container(image_tag, browser=None, headless=False):
@@ -178,16 +170,14 @@ def verify_browser_connection(browser_type):
 
 
 @pytest.mark.parametrize("headless", [False, True], ids=["headed", "headless"])
-@pytest.mark.parametrize("base,target", IMAGES, ids=[f"{b}-{t}" for b, t in IMAGES]) 
-def test_playwright_vnc_connection(base, target, headless):
+@pytest.mark.parametrize("base,target,browsers", IMAGES, ids=[f"{b}-{t}" for b, t, _ in IMAGES])
+def test_playwright_vnc_connection(base, target, browsers, headless):
     """Test playwright browser connection and page loading"""
     image_tag = f"{IMAGE_REPO}:{base}-latest" if target == "all" else f"{IMAGE_REPO}:{base}-{target}-latest"
     
     # Skip if image not built locally
     if not image_exists(image_tag):
         pytest.skip(f"Image not found: {image_tag}")
-    
-    browsers = BROWSERS[target]
     
     # Test each browser for this image
     for browser_type in browsers:
