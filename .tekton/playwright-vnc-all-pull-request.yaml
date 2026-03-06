@@ -1,0 +1,45 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  annotations:
+    build.appstudio.openshift.io/repo: https://github.com/RedHatQE/playwright-images?rev={{revision}}
+    build.appstudio.redhat.com/commit_sha: '{{revision}}'
+    build.appstudio.redhat.com/pull_request_number: '{{pull_request_number}}'
+    build.appstudio.redhat.com/target_branch: '{{target_branch}}'
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+    pipelinesascode.tekton.dev/max-keep-runs: "3"
+    pipelinesascode.tekton.dev/on-cel-expression: event == "pull_request" && target_branch
+      == "main"
+    pipelinesascode.tekton.dev/pipeline: https://github.com/RedHatInsights/konflux-pipelines/raw/v1.60.0/pipelines/docker-build-oci-ta.yaml
+  creationTimestamp: null
+  labels:
+    appstudio.openshift.io/application: playwright-images
+    appstudio.openshift.io/component: playwright-vnc-all
+    pipelines.appstudio.openshift.io/type: build
+  name: playwright-vnc-all-on-pull-request
+  namespace: insights-management-tenant
+spec:
+  params:
+  - name: git-url
+    value: '{{source_url}}'
+  - name: revision
+    value: '{{revision}}'
+  - name: output-image
+    value: quay.io/redhat-user-workloads/insights-management-tenant/playwright-images/playwright-vnc-all:on-pr-{{revision}}
+  - name: image-expires-after
+    value: 5d
+  - name: dockerfile
+    value: docker/Dockerfile.ubi9
+  - name: path-context
+    value: .
+  - name: target-stage
+    value: "all"
+  pipelineRef:
+    name: docker-build-oci-ta
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-playwright-vnc-all
+  workspaces:
+  - name: git-auth
+    secret:
+      secretName: '{{ git_auth_secret }}'
+status: {}
