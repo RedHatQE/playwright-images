@@ -32,7 +32,7 @@ spec:
   - name: target-stage
     value: "all"
   pipelineRef:
-    name: docker-build-oci-target_branch
+    name: docker-build-oci-ta
   taskRunTemplate:
     serviceAccountName: build-pipeline-playwright-vnc-all
   workspaces:
