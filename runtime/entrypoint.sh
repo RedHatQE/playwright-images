@@ -53,9 +53,11 @@ log_info "Headless Mode: ${PW_HEADLESS}"
 # Handle various truthy values: true, True, TRUE, 1, yes, etc.
 PW_HEADLESS_LOWER=$(echo "${PW_HEADLESS}" | tr '[:upper:]' '[:lower:]')
 if [ "${PW_HEADLESS_LOWER}" != "true" ] && [ "${PW_HEADLESS}" != "1" ]; then
-    log_info "Starting VNC server on ${DISPLAY}..."
+    # Set VNC display resolution from environment variables (default: 1920x1080)
+    VNC_GEOMETRY="${DISPLAY_WIDTH:-1920}x${DISPLAY_HEIGHT:-1080}"
+    log_info "Starting VNC server on ${DISPLAY} with geometry ${VNC_GEOMETRY}..."
     Xvnc ${DISPLAY} \
-        -geometry 1280x1024 \
+        -geometry ${VNC_GEOMETRY} \
         -depth 24 \
         -rfbport ${VNC_PORT} \
         -SecurityTypes None \
