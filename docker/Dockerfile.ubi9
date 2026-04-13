@@ -6,7 +6,7 @@
 
 FROM registry.access.redhat.com/ubi9/nodejs-22:9.7-1773304419 AS base
 
-ARG PLAYWRIGHT_VERSION=v1.57
+ARG PLAYWRIGHT_VERSION=1.58.2
 ARG BUILD_DATE
 ARG VERSION
 LABEL org.opencontainers.image.title="Playwright with VNC (UBI9)" \
