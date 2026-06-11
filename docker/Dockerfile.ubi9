@@ -7,6 +7,7 @@
 FROM registry.access.redhat.com/ubi9/nodejs-22:9.8-1780607865 AS base
 
 ARG PLAYWRIGHT_VERSION=1.58.2
+ARG PLAYWRIGHT_MINOR_VERSION=1.58
 ARG BUILD_DATE
 ARG VERSION
 LABEL org.opencontainers.image.title="Playwright with VNC (UBI9)" \
@@ -15,7 +16,7 @@ LABEL org.opencontainers.image.title="Playwright with VNC (UBI9)" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       playwright.version="${PLAYWRIGHT_VERSION}" \
-      konflux.additional-tags="${PLAYWRIGHT_VERSION}"
+      konflux.additional-tags="${PLAYWRIGHT_VERSION} ${PLAYWRIGHT_MINOR_VERSION}"
 ENV PW_VERSION=${PLAYWRIGHT_VERSION} \
     PW_PORT=3000 \
     PW_BROWSER="chromium" \

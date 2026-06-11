@@ -109,11 +109,13 @@ targets["all"]="all"
 # Build metadata
 BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 VERSION="pw-${PLAYWRIGHT_VERSION}"
+PLAYWRIGHT_MINOR_VERSION=$(echo "$PLAYWRIGHT_VERSION" | cut -d. -f1-2)
 
 echo "Starting image build process..."
 echo "Build Configuration:"
 echo "   Base Image:         ${BASE_IMAGE}"
 echo "   Playwright Version: ${PLAYWRIGHT_VERSION}"
+echo "   Minor Version Tag:  ${PLAYWRIGHT_MINOR_VERSION}"
 echo "   Repository:         ${IMAGE_REPO}"
 echo "   Container Engine:   ${CONTAINER_ENGINE}"
 echo "   Build Date:         ${BUILD_DATE}"
@@ -175,6 +177,7 @@ build_and_tag() {
         --file ${DOCKERFILE} \
         --target ${target} \
         --build-arg PLAYWRIGHT_VERSION="${PLAYWRIGHT_VERSION}" \
+        --build-arg PLAYWRIGHT_MINOR_VERSION="${PLAYWRIGHT_MINOR_VERSION}" \
         --build-arg BUILD_DATE="${BUILD_DATE}" \
         --build-arg VERSION="${VERSION}" \
         --tag "${version_tag}" \
