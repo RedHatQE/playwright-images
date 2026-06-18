@@ -8,50 +8,92 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   check-version:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Get all tags
-          token: ${{ secrets.WORKFLOW_TOKEN }}  # Required to trigger workflows on tag push
 
-      - name: Check for new Playwright version
+      - name: Get latest Playwright version
+        id: playwright
         run: |
-          echo "🔍 Checking for new Playwright version..."
-          
-          # Get latest Playwright version
           LATEST_VERSION=$(./scripts/get-playwright-version.sh latest)
-          echo "Latest Playwright version: ${LATEST_VERSION}"
-          
-          # Check if git tag exists
-          if git rev-parse "v${LATEST_VERSION}" >/dev/null 2>&1; then
-            echo "ℹ️ Tag v${LATEST_VERSION} already exists. No action needed."
-            exit 0
-          fi
-          
-          echo "✨ New version detected: v${LATEST_VERSION}"
-          
-          # Check if images already exist on Docker Hub
-          if docker manifest inspect digitronik/playwright-vnc:bookworm-${LATEST_VERSION} >/dev/null 2>&1; then
-            echo "ℹ️ Images for v${LATEST_VERSION} already exist on Docker Hub. Creating tag only."
-          else
-            echo "🚀 New version ${LATEST_VERSION} - will trigger build!"
-          fi
-          
-          # Create git tag
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git tag -a "v${LATEST_VERSION}" -m "Playwright version ${LATEST_VERSION}
+          MINOR_VERSION=$(echo "${LATEST_VERSION}" | cut -d. -f1-2)
+          echo "version=${LATEST_VERSION}" >> $GITHUB_OUTPUT
+          echo "minor_version=${MINOR_VERSION}" >> $GITHUB_OUTPUT
+          echo "Latest Playwright version: ${LATEST_VERSION} (minor: ${MINOR_VERSION})"
 
-          Auto-detected new Playwright release.
-          This tag will trigger the build workflow."
-          
-          git push origin "v${LATEST_VERSION}"
-          
-          echo "✅ Tag v${LATEST_VERSION} created and pushed"
-          echo "🔄 Build workflow will be triggered automatically"
+      - name: Get current Dockerfile version
+        id: current
+        run: |
+          CURRENT=$(grep -oP '(?<=ARG PLAYWRIGHT_VERSION=)[\d.]+' docker/Dockerfile.ubi9)
+          echo "current=${CURRENT}" >> $GITHUB_OUTPUT
+          echo "Current Dockerfile version: ${CURRENT}"
+
+      - name: No update needed
+        if: steps.playwright.outputs.version == steps.current.outputs.current
+        run: |
+          echo "ℹ️ Dockerfiles already at Playwright v${{ steps.playwright.outputs.version }}. No PR needed."
+
+      - name: Update Dockerfile versions
+        if: steps.playwright.outputs.version != steps.current.outputs.current
+        run: |
+          VERSION="${{ steps.playwright.outputs.version }}"
+          MINOR="${{ steps.playwright.outputs.minor_version }}"
+
+          for dockerfile in docker/Dockerfile.ubi9 docker/Dockerfile.bookworm; do
+            sed -i "s/^ARG PLAYWRIGHT_VERSION=.*/ARG PLAYWRIGHT_VERSION=${VERSION}/" "${dockerfile}"
+            sed -i "s/^ARG PLAYWRIGHT_MINOR_VERSION=.*/ARG PLAYWRIGHT_MINOR_VERSION=${MINOR}/" "${dockerfile}"
+            echo "✅ Updated ${dockerfile}: PLAYWRIGHT_VERSION=${VERSION}, PLAYWRIGHT_MINOR_VERSION=${MINOR}"
+          done
+
+      - name: Open Pull Request
+        if: steps.playwright.outputs.version != steps.current.outputs.current
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: "bump/playwright-${{ steps.playwright.outputs.version }}"
+          commit-message: "chore: bump Playwright to v${{ steps.playwright.outputs.version }}"
+          title: "chore: bump Playwright to v${{ steps.playwright.outputs.version }}"
+          body: |
+            ## 🎭 Playwright Version Bump
+
+            Automated update of `docker/Dockerfile.ubi9` and `docker/Dockerfile.bookworm` to the latest Playwright release.
+
+            | | Version |
+            |---|---|
+            | **Previous** | `${{ steps.current.outputs.current }}` |
+            | **New** | `${{ steps.playwright.outputs.version }}` |
+
+            ---
+
+            > [!CAUTION]
+            > **⚠️ The Playwright client and server versions MUST match exactly.**
+            >
+            > Merging this PR will trigger the **Konflux Tekton pipeline** to build and publish new images tagged
+            > with `latest`, `${{ steps.playwright.outputs.version }}`, and `${{ steps.playwright.outputs.minor_version }}`.
+            >
+            > **If you or any consumer (Jenkins pipelines, SRE templates, integration tests, etc.) pins the image
+            > by `latest` tag or by the minor version tag, the image will silently update on the next pull —
+            > and any test suite that installs a different `playwright` npm/pip version on the client side
+            > will immediately start failing with protocol mismatch errors.**
+            >
+            > **Before merging, verify the following:**
+            > - [ ] All CI/CD pipelines (Jenkins, GitLab CI, GitHub Actions) that use these images are updated to install `playwright@${{ steps.playwright.outputs.version }}` on the client side.
+            > - [ ] All SRE / smoke-test templates that reference these images are pinned to the new version or have been tested against it.
+            > - [ ] Any `pip install playwright` or `npm install playwright` in test code specifies `==${{ steps.playwright.outputs.version }}` / `@${{ steps.playwright.outputs.version }}`.
+
+            ---
+
+            ### What happens on merge?
+            Merging this PR pushes the version bump to `main`, which automatically triggers
+            the **Konflux Tekton pipeline** to build and release the updated images.
+
+            ### Changelog
+            https://github.com/microsoft/playwright/releases/tag/v${{ steps.playwright.outputs.version }}
+          labels: "dependencies,playwright"
+          delete-branch: true
