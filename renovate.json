@@ -1,0 +1,28 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Bump the Playwright version pinned via ARG PLAYWRIGHT_VERSION in the Dockerfiles",
+      "managerFilePatterns": ["docker/Dockerfile.*"],
+      "matchStrings": [
+        "ARG PLAYWRIGHT_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "playwright",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Keep ARG PLAYWRIGHT_MINOR_VERSION (major.minor only) in sync with the Playwright npm release",
+      "managerFilePatterns": ["docker/Dockerfile.*"],
+      "matchStrings": [
+        "ARG PLAYWRIGHT_MINOR_VERSION=(?<currentValue>\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "playwright",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^(?<version>\\d+\\.\\d+)"
+    }
+  ]
+}
