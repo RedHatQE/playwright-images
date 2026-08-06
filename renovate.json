@@ -10,7 +10,7 @@
       ],
       "depNameTemplate": "playwright",
       "datasourceTemplate": "npm",
-      "versioningTemplate": "semver"
+      "versioningTemplate": "semver-coerced"
     },
     {
       "customType": "regex",
@@ -21,7 +21,7 @@
       ],
       "depNameTemplate": "playwright",
       "datasourceTemplate": "npm",
-      "versioningTemplate": "semver",
+      "versioningTemplate": "semver-coerced",
       "extractVersionTemplate": "^(?<version>\\d+\\.\\d+)"
     }
   ]
