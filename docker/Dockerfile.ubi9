@@ -4,7 +4,7 @@
 # Note: Google Chrome is not available for UBI9 (RPM signing policy restriction)
 # ==============================================================================
 
-FROM registry.access.redhat.com/ubi9/nodejs-22:9.8-1785905901 AS base
+FROM registry.access.redhat.com/ubi9/nodejs-22:9.8-1788917721 AS base
 
 ARG PLAYWRIGHT_VERSION=1.58.2
 ARG PLAYWRIGHT_MINOR_VERSION=1.58
