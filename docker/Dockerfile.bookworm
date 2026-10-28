@@ -3,7 +3,7 @@
 # Targets: firefox, chromium, chrome, all
 # ==============================================================================
 
-FROM node:24-bookworm-slim AS base
+FROM node:26-bookworm-slim AS base
 
 ARG PLAYWRIGHT_VERSION=1.58.2
 ARG PLAYWRIGHT_MINOR_VERSION=1.58
